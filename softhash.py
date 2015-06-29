@@ -73,10 +73,11 @@ if __name__ == "__main__":
     # sf = SoftHash('./ImageDatabaseCrops/NikonD60/DS-01-UTFI-0000-0_crop.TIF')
     sf = SoftHash('Ub7XL8T.png')
 
+    pyplot.figure('original')
     sf.plotImg()
-    pyplot.figure()
 
     sf.denoise()
+    pyplot.figure('denoised')
     sf.plotImg()
 
     pyplot.show(block=True)
