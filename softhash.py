@@ -3,7 +3,6 @@
 import cv2
 import numpy as np
 from matplotlib import pyplot as plt
-from matplotlib import cm
 import random
 
 import logging
@@ -80,13 +79,11 @@ class SoftHash(object):
 
         if self.img.shape[2] == 3:
             self._color_image = True
-            # it's a color image let's convert!
-            # this way we can show it using plt
-
+            # it's a color image let's convert to RGB!
             self.img = cv2.cvtColor(self.img, cv2.COLOR_BGR2RGB)
 
-        self._blocks = (np.array(self.img.shape[:2]) /
-                        self._block_size)
+        self._blocks = (
+            np.array(self.img.shape[:2]) / self._block_size)
 
         h, w = self._blocks * self._block_size
         # since we are using 256x256 pixel images this step
@@ -97,18 +94,18 @@ class SoftHash(object):
 
         self.img = self.img[:h, :w]
 
-        self.initializeKey(key)
+        # ensure that we select at most the
+        # number of blocks composing the image
+        self._keysize = selectedblocks \
+            if selectedblocks < self._nblocks \
+            else self._nblocks
 
-        if selectedblocks > self._nblocks:
-            # ensure that we select at most the
-            # number of blocks composing the image
-            selectedblocks = self._nblocks
+        self.initializeKey(key)
 
     def initializeKey(self, key):
         random.seed(key)  # initialize RNG
 
         # create the key selecting which blocks we are going to use
-        print self._blocks
         self._key = [
             [random.choice(range(0, self._blocks[0])),
                 random.choice(range(0, self._blocks[1]))]
@@ -179,7 +176,7 @@ class SoftHash(object):
 
         if DEBUG:
             # needed to calc the square layout for plots
-            sqr = np.around(len(self._key) / (2 * np.sqrt(2)))
+            sqr = np.around(np.sqrt(self._keysize))
 
         quant = np.rot90(np.triu(np.ones([blocksize, blocksize])))
         logger.debug("quantization matrix: %s", quant)
@@ -208,8 +205,6 @@ class SoftHash(object):
 
             logger.debug("quantized block DCT: %s", Qdct)
 
-            invBdct = cv2.idct(Qdct)
-
             if DEBUG:
                 # show the selected blocks
 
@@ -224,6 +219,9 @@ class SoftHash(object):
                 plt.imshow(
                     Bdct, cmap=plt.get_cmap('gray'),
                     interpolation='nearest')
+
+                # inverse DCT and shift again +128 to check results
+                invBdct = cv2.idct(Qdct) + 128
 
                 plt.figure('decoded DCT blocks')
                 plt.subplot(sqr, sqr, idx + 1)
