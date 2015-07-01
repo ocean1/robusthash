@@ -1,7 +1,7 @@
 #!/usr/bin/python
 
 import cv2
-import numpy
+import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib import cm
 import random
@@ -17,12 +17,12 @@ DEBUG = True
 
 logger = logging.getLogger("softhash")
 ch = logging.StreamHandler()
-if DEBUG:
-    logger.setLevel("DEBUG")
-    ch.setLevel("DEBUG")
-else:
-    logger.setLevel("WARNING")
-    ch.setLevel("WARNING")
+
+logger.setLevel("DEBUG")
+ch.setLevel("DEBUG")
+
+# logger.setLevel("WARNING")
+# ch.setLevel("WARNING")
 
 logger.addHandler(ch)
 
@@ -48,7 +48,7 @@ class SoftHash(object):
 
     @property
     def key_pixels(self):
-        return numpy.array(self._key) * self._block_size
+        return np.array(self._key) * self._block_size
 
     @img.setter
     def img(self, value):
@@ -85,7 +85,7 @@ class SoftHash(object):
 
             self.img = cv2.cvtColor(self.img, cv2.COLOR_BGR2RGB)
 
-        self._blocks = (numpy.array(self.img.shape[:2]) /
+        self._blocks = (np.array(self.img.shape[:2]) /
                         self._block_size)
 
         h, w = self._blocks * self._block_size
@@ -141,12 +141,12 @@ class SoftHash(object):
         # if it's greyscale just use the existing channel
         if self.is_color:
             _img = cv2.cvtColor(self.img, cv2.COLOR_RGB2YCR_CB)
-            Y = numpy.zeros((_img.shape[0], _img.shape[1]), dtype=_img.dtype)
+            Y = np.zeros((_img.shape[0], _img.shape[1]), dtype=_img.dtype)
             Y[:, :] = _img[:, :, 0]
 
-            # Cr = numpy.zeros((_img.shape[0], _img.shape[1]), dtype=_img.dtype)
+            # Cr = np.zeros((_img.shape[0], _img.shape[1]), dtype=_img.dtype)
             # Cr[:, :] = _img[:, :, 1]
-            # Cb = numpy.zeros((_img.shape[0], _img.shape[1]), dtype=_img.dtype)
+            # Cb = np.zeros((_img.shape[0], _img.shape[1]), dtype=_img.dtype)
             # Cb[:, :] = _img[:, :, 2]
 
         else:
@@ -161,24 +161,12 @@ class SoftHash(object):
             for block in self.key_pixels:
                 bl = block[::-1]
                 bl = [
-                    [bl[0], bl[0], bl[0] + blocksize, bl[0] + blocksize, bl[0]],
+                    [bl[0], bl[0], bl[0] + blocksize,
+                        bl[0] + blocksize, bl[0]],
                     [bl[1], bl[1] + blocksize, bl[1] + blocksize, bl[1], bl[1]]
                 ]
 
                 plt.plot(bl[0], bl[1], 'r-')
-
-            """
-                print block, (block[0], block[1] + blocksize)
-                print block, (block[0] + blocksize, block[1])
-                print (block[0] + blocksize, block[1]), block + blocksize
-                print (block[0] + blocksize, block[1]), block + blocksize
-                print ''
-                print ''
-                plt.plot( )block, (block[0], block[1] + blocksize), '')
-                print block, (block[0] + blocksize, block[1])
-                print (block[0] + blocksize, block[1]), block + blocksize
-                print (block[0] + blocksize, block[1]), block + blocksize
-            """
 
         # plt.figure('Cr channel')
         # plt.imshow(Cr)
@@ -190,7 +178,11 @@ class SoftHash(object):
         logger.debug("using blocks of size %d", self._block_size)
 
         if DEBUG:
-            plt.figure('selected blocks')
+            # needed to calc the square layout for plots
+            sqr = np.around(len(self._key) / (2 * np.sqrt(2)))
+
+        quant = np.rot90(np.triu(np.ones([blocksize, blocksize])))
+        logger.debug("quantization matrix: %s", quant)
 
         for idx, block in enumerate(self.key_pixels):
 
@@ -199,60 +191,48 @@ class SoftHash(object):
             # implementation... but looks like a good rule to follow
             # http://compgroups.net/comp.compression/level-shift-in-jpeg-optional-or-mandatory/175097
 
-            B = numpy.zeros((blocksize, blocksize), dtype=numpy.int8)
+            B = np.zeros((blocksize, blocksize), dtype=np.int8)
+
             B[:, :] = Y[
                 block[0]:block[0] + blocksize,
                 block[1]:block[1] + blocksize] - 128
 
-            # logger.warning("index = %s", block)
-            # logger.debug("selected block: %s", B)
+            logger.debug("index = %s", block)
+            logger.debug("selected block: %s", B)
+
+            Bdct = cv2.dct(np.array(B, dtype=np.float32))
+            logger.debug("block dct: %s", Bdct)
+
+            # quantize the block DCT cleaning out high frequencies
+            Qdct = np.multiply(quant, Bdct)
+
+            logger.debug("quantized block DCT: %s", Qdct)
+
+            invBdct = cv2.idct(Qdct)
 
             if DEBUG:
                 # show the selected blocks
-                sqr = numpy.around(len(self._key) / (2 * numpy.sqrt(2)))
+
+                plt.figure('selected blocks')
                 plt.subplot(sqr, sqr, idx + 1)
                 plt.imshow(
                     B, cmap=plt.get_cmap('gray'),
-
                     interpolation='nearest')
+
+                plt.figure('blocks DCT')
+                plt.subplot(sqr, sqr, idx + 1)
+                plt.imshow(
+                    Bdct, cmap=plt.get_cmap('gray'),
+                    interpolation='nearest')
+
+                plt.figure('decoded DCT blocks')
+                plt.subplot(sqr, sqr, idx + 1)
+                plt.imshow(
+                    invBdct, cmap=plt.get_cmap('gray'),
+                    interpolation='nearest')
+
         if DEBUG:
             plt.tight_layout()
-
-    """        TransAll = []
-            TransAllQuant = []
-            ch = ['Y', 'Cr', 'Cb']
-            plt.figure()
-            for idx, channel in enumerate(imSub):
-                plt.subplot(1, 3, idx + 1)
-                channelrows = channel.shape[0]
-                channelcols = channel.shape[1]
-                Trans = np.zeros((channelrows, channelcols), np.float32)
-                TransQuant = np.zeros((channelrows, channelcols), np.float32)
-                blocksV = channelrows / B
-                blocksH = channelcols / B
-                vis0 = np.zeros((channelrows, channelcols), np.float32)
-                vis0[:channelrows, :channelcols] = channel
-                vis0 = vis0 - 128
-                for row in range(blocksV):
-                    for col in range(blocksH):
-                        currentblock = cv2.dct(
-                            vis0[row * B:(row + 1) * B, col * B:(col + 1) * B])
-                        Trans[
-                            row * B:(row + 1) * B, col * B:(col + 1) * B] = currentblock
-                        TransQuant[
-                            row * B:(row + 1) * B, col * B:(col + 1) * B] = np.round(currentblock / Q[idx])
-                TransAll.append(Trans)
-                TransAllQuant.append(TransQuant)
-                if idx == 0:
-                    selectedTrans = Trans[
-                        srow * B:(srow + 1) * B, scol * B:(scol + 1) * B]
-                else:
-                    sr = np.floor(srow / SSV)
-                    sc = np.floor(scol / SSV)
-                    selectedTrans = Trans[sr * B:(sr + 1) * B, sc * B:(sc + 1) * B]
-                plt.imshow(selectedTrans, cmap=cm.jet, interpolation='nearest')
-                plt.colorbar(shrink=0.5)
-                plt.title('DCT of ' + ch[idx])"""
 
     @property
     def is_color(self):
@@ -263,7 +243,7 @@ if __name__ == "__main__":
     # sf = SoftHash(
     #    './ImageDatabaseCrops/NikonD60/DS-01-UTFI-0196-0_crop.TIF',
     #    1234)
-    sf = SoftHash('test.png', 1234, 32)
+    sf = SoftHash('test.png', 1234, 8, 32)
 
     sf.update()
 
