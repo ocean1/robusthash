@@ -17,13 +17,54 @@ DEBUG = True
 logger = logging.getLogger("softhash")
 ch = logging.StreamHandler()
 
-logger.setLevel("DEBUG")
-ch.setLevel("DEBUG")
+logger.setLevel("WARNING")
+ch.setLevel("WARNING")
 
 # logger.setLevel("WARNING")
 # ch.setLevel("WARNING")
 
 logger.addHandler(ch)
+
+
+class ImageHash(object):
+
+    """
+    Hash encapsulation. Can be used for dictionary keys and comparisons.
+    """
+
+    def __init__(self, binary_array):
+        self.hash = binary_array
+
+    def __str__(self):
+        return "%s" % self.hash.flatten()
+
+    def __repr__(self):
+        return repr(self.hash)
+
+    def __sub__(self, other):
+        if other is None:
+            raise TypeError('Other hash must not be None.')
+        if self.hash.size != other.hash.size:
+            raise TypeError(
+                'ImageHashes must be of the same shape.',
+                self.hash.shape, other.hash.shape)
+        return (self.hash.flatten() != other.hash.flatten()).sum()
+
+    def __eq__(self, other):
+        if other is None:
+            return False
+        return np.array_equal(self.hash.flatten(), other.hash.flatten())
+
+    def __ne__(self, other):
+        if other is None:
+            return False
+        return not np.array_equal(self.hash.flatten(), other.hash.flatten())
+
+    def __hash__(self):
+        # this returns a 8 bit integer, intentionally shortening the
+        # information
+        return sum(
+            [2**(i % 8) for i, v in enumerate(self.hash.flatten()) if v])
 
 
 class SoftHash(object):
@@ -71,10 +112,21 @@ class SoftHash(object):
         """ the total number of blocks composing the image """
         return self._blocks[0] * self._blocks[1]
 
-    def __init__(self, imagefile, key, blocksize=8, selectedblocks=8):
+    def __init__(self,
+                 imagefile,
+                 key,
+                 blocksize=8,
+                 selectedblocks=None,
+                 maskfactor=3,
+                 resize=(64, 64)
+                 ):
 
         self._block_size = blocksize
-        self.img = cv2.imread(imagefile, cv2.CV_LOAD_IMAGE_UNCHANGED)
+
+        # we have a DB of 256x256 cropped images, subsample
+        self.img = cv2.resize(
+            cv2.imread(imagefile, cv2.CV_LOAD_IMAGE_UNCHANGED),
+            resize)
         # cv2 loads images in BGR. BGR -> RGB conversion needed
 
         if self.img.shape[2] == 3:
@@ -82,8 +134,7 @@ class SoftHash(object):
             # it's a color image let's convert to RGB!
             self.img = cv2.cvtColor(self.img, cv2.COLOR_BGR2RGB)
 
-        self._blocks = (
-            np.array(self.img.shape[:2]) / self._block_size)
+        self._blocks = np.array(self.img.shape[:2]) / self._block_size
 
         h, w = self._blocks * self._block_size
         # since we are using 256x256 pixel images this step
@@ -96,11 +147,21 @@ class SoftHash(object):
 
         # ensure that we select at most the
         # number of blocks composing the image
-        self._keysize = selectedblocks \
-            if selectedblocks < self._nblocks \
-            else self._nblocks
+        if selectedblocks is None:
+            selectedblocks = self._nblocks
+        elif selectedblocks > self._nblocks:
+            selectedblocks = self._nblocks
+
+        self._keysize = selectedblocks
 
         self.initializeKey(key)
+
+        self.mask = np.rot90(
+            np.triu(np.ones([blocksize, blocksize]), maskfactor))
+
+        logger.info(
+            "the hash size is %d bits",
+            8 * np.count_nonzero(self.mask) * selectedblocks)
 
     def initializeKey(self, key):
         random.seed(key)  # initialize RNG
@@ -131,7 +192,7 @@ class SoftHash(object):
         imgfilter(self.img, self.img)
         pass
 
-    def update(self):
+    def hash(self):
         # by default we denoise the image using non-local means algorithm
         # should denoising be done before or after resizing?
         self.denoise()
@@ -180,8 +241,7 @@ class SoftHash(object):
             # needed to calc the square layout for plots
             sqr = np.ceil(np.sqrt(self._keysize))
 
-        quant = np.rot90(np.triu(np.ones([blocksize, blocksize])))
-        logger.debug("quantization matrix: %s\n", quant)
+        logger.debug("mask matrix: %s\n", self.mask)
 
         max_tot = np.finfo(np.float32).min
         min_tot = np.finfo(np.float32).max
@@ -199,19 +259,15 @@ class SoftHash(object):
                 block[0]:block[0] + blocksize,
                 block[1]:block[1] + blocksize] - 128
 
-            logger.debug("block index = %s", block)
+            # logger.debug("block index = %s", block)
             # logger.debug("selected block: %s", B)
 
             Bdct = cv2.dct(np.array(B, dtype=np.float32))
             # logger.debug("block dct: %s", Bdct)
 
             # quantize the block DCT cleaning out high frequencies
-            Qdct = np.multiply(quant, Bdct)
-
-            max_val = Bdct.max()
-            max_tot = max(max_tot, max_val)
-            min_val = Bdct.min()
-            min_tot = min(min_tot, min_val)
+            Qdct = np.array(np.multiply(self.mask, Bdct), dtype=np.int8)
+            Qdct = np.array(Qdct, dtype=np.float32)
 
             # logger.debug("quantized block DCT: %s", Qdct)
 
@@ -233,7 +289,8 @@ class SoftHash(object):
                 # inverse DCT and shift again +128 to check results
                 # an int 16 should be enough to store results of the DCT
                 # (even less bits could be used probably!)
-                invBdct = np.array(cv2.idct(Qdct), dtype=np.int16) + 128
+                invBdct = np.array(
+                    cv2.idct(Qdct), dtype=np.int32) + 128
 
                 plt.figure('decoded DCT blocks')
                 plt.subplot(sqr, sqr, idx + 1)
@@ -241,9 +298,21 @@ class SoftHash(object):
                     invBdct, cmap=plt.get_cmap('gray'),
                     interpolation='nearest')
 
-        if DEBUG:
-            plt.tight_layout()
         logger.debug("max and min values: %s, %s", max_tot, min_tot)
+
+        # let's build the hash
+
+        indices = np.transpose(self.mask.nonzero())
+
+        h = np.array(np.zeros(len(indices)))
+
+        i = 0
+        for idx in indices:
+            h[i] = Qdct[idx[0]][idx[1]]
+            i += 1
+        print h
+
+        return ImageHash(h)
 
     @property
     def is_color(self):
@@ -254,9 +323,14 @@ if __name__ == "__main__":
     # sf = SoftHash(
     #    './ImageDatabaseCrops/NikonD60/DS-01-UTFI-0196-0_crop.TIF',
     #    1234)
-    sf = SoftHash('test.png', 1234, 32, 9)
+    sf = SoftHash(
+        'test.png', 1234, blocksize=16,
+        selectedblocks=10, maskfactor=11,
+        resize=(64, 64))
 
-    sf.update()
+    h = sf.hash()
+
+    print h
 
     # TODO: based on the keysize we can decide to resize the image
     # to match the final key size :)
