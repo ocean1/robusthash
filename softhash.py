@@ -2,7 +2,8 @@
 
 import cv2
 import numpy
-from matplotlib import pyplot, cm
+from matplotlib import pyplot as plt
+from matplotlib import cm
 import random
 
 import logging
@@ -10,7 +11,7 @@ import logging
 import matplotlib
 matplotlib.interactive(True)
 matplotlib.use("TkAgg")
-# pyplot.ion()
+# plt.ion()
 
 DEBUG = True
 
@@ -24,19 +25,6 @@ else:
     ch.setLevel("WARNING")
 
 logger.addHandler(ch)
-
-
-def _getblock(M, block, blocksize):
-    """ return the selected block of the given matrix
-    """
-    start = numpy.array(block) * blocksize
-
-    B = M[start[0]:start[0] + blocksize,
-          start[1]:start[1] + blocksize]
-
-    logger.warning("index = %s", start)
-    logger.debug("selected block: %s", B)
-    return B
 
 
 class SoftHash(object):
@@ -58,6 +46,10 @@ class SoftHash(object):
     def img(self):
         return self._img
 
+    @property
+    def key_pixels(self):
+        return numpy.array(self._key) * self._block_size
+
     @img.setter
     def img(self, value):
         self._img = value
@@ -69,11 +61,18 @@ class SoftHash(object):
         python RNG based on a small key that can be initialized"""
     _key = []
 
-    _keysize = 8  # the number of selected blocks + some other fun stuff
+    _keysize = 8  # the number of selected blocks
 
-    _blocks = 0  # the number of blocks (of _block_size) composing the image
+    # the number of blocks (of _block_size)
+    # composing the image w/h
+    _blocks = 0
 
-    def __init__(self, imagefile, key, blocksize=8):
+    @property
+    def _nblocks(self):
+        """ the total number of blocks composing the image """
+        return self._blocks[0] * self._blocks[1]
+
+    def __init__(self, imagefile, key, blocksize=8, selectedblocks=8):
 
         self._block_size = blocksize
         self.img = cv2.imread(imagefile, cv2.CV_LOAD_IMAGE_UNCHANGED)
@@ -82,36 +81,41 @@ class SoftHash(object):
         if self.img.shape[2] == 3:
             self._color_image = True
             # it's a color image let's convert!
-            # this way we can show it using pyplot
+            # this way we can show it using plt
 
             self.img = cv2.cvtColor(self.img, cv2.COLOR_BGR2RGB)
 
         self._blocks = (numpy.array(self.img.shape[:2]) /
                         self._block_size)
+
         h, w = self._blocks * self._block_size
         # since we are using 256x256 pixel images this step
         # shouldn't be needed but it is here just for completeness
         logger.debug("cropped image size")
-        logger.debug("h,w: %s", (h, w))
+        logger.debug("h, w: %s", (h, w))
         logger.debug("blocks: %s", self._blocks)
 
         self.img = self.img[:h, :w]
 
         self.initializeKey(key)
 
+        if selectedblocks > self._nblocks:
+            # ensure that we select at most the
+            # number of blocks composing the image
+            selectedblocks = self._nblocks
+
     def initializeKey(self, key):
         random.seed(key)  # initialize RNG
 
         # create the key selecting which blocks we are going to use
-        self._key = zip(
-            random.sample(range(0, self._blocks[0]), self._keysize),
-            random.sample(range(0, self._blocks[1]), self._keysize))
+        print self._blocks
+        self._key = [
+            [random.choice(range(0, self._blocks[0])),
+                random.choice(range(0, self._blocks[1]))]
+            for i in range(0, self._keysize)
+        ]
 
         logger.debug("Key is: %s", self._key)
-
-    def plotImg(self, name=None):
-
-        pyplot.imshow(self.img)
 
     def denoise(self):
         if self.is_color:
@@ -149,19 +153,70 @@ class SoftHash(object):
             Y = self.img
 
         logger.debug("Y: %s", Y)
-        pyplot.figure('Y channel')
-        pyplot.imshow(Y, cmap=pyplot.get_cmap('gray'))
-        # pyplot.figure('Cr channel')
-        # pyplot.imshow(Cr)
-        # pyplot.figure('Cb channel')
-        # pyplot.imshow(Cb)
+        blocksize = self._block_size
+
+        if DEBUG:
+            plt.figure('Y channel')
+            plt.imshow(Y, cmap=plt.get_cmap('gray'), interpolation=None)
+            for block in self.key_pixels:
+                bl = block[::-1]
+                bl = [
+                    [bl[0], bl[0], bl[0] + blocksize, bl[0] + blocksize, bl[0]],
+                    [bl[1], bl[1] + blocksize, bl[1] + blocksize, bl[1], bl[1]]
+                ]
+
+                plt.plot(bl[0], bl[1], 'r-')
+
+            """
+                print block, (block[0], block[1] + blocksize)
+                print block, (block[0] + blocksize, block[1])
+                print (block[0] + blocksize, block[1]), block + blocksize
+                print (block[0] + blocksize, block[1]), block + blocksize
+                print ''
+                print ''
+                plt.plot( )block, (block[0], block[1] + blocksize), '')
+                print block, (block[0] + blocksize, block[1])
+                print (block[0] + blocksize, block[1]), block + blocksize
+                print (block[0] + blocksize, block[1]), block + blocksize
+            """
+
+        # plt.figure('Cr channel')
+        # plt.imshow(Cr)
+        # plt.figure('Cb channel')
+        # plt.imshow(Cb)
 
         # now we use the selected block with the given key
 
         logger.debug("using blocks of size %d", self._block_size)
 
-        for block in self._key:
-            B = _getblock(Y, block, self._block_size)
+        if DEBUG:
+            plt.figure('selected blocks')
+
+        for idx, block in enumerate(self.key_pixels):
+
+            # now like the JPEG standard we shift the values by -128
+            # don't know if it would change anything with cv2 dct
+            # implementation... but looks like a good rule to follow
+            # http://compgroups.net/comp.compression/level-shift-in-jpeg-optional-or-mandatory/175097
+
+            B = numpy.zeros((blocksize, blocksize), dtype=numpy.int8)
+            B[:, :] = Y[
+                block[0]:block[0] + blocksize,
+                block[1]:block[1] + blocksize] - 128
+
+            # logger.warning("index = %s", block)
+            # logger.debug("selected block: %s", B)
+
+            if DEBUG:
+                # show the selected blocks
+                sqr = numpy.around(len(self._key) / (2 * numpy.sqrt(2)))
+                plt.subplot(sqr, sqr, idx + 1)
+                plt.imshow(
+                    B, cmap=plt.get_cmap('gray'),
+
+                    interpolation='nearest')
+        if DEBUG:
+            plt.tight_layout()
 
     """        TransAll = []
             TransAllQuant = []
@@ -208,14 +263,14 @@ if __name__ == "__main__":
     # sf = SoftHash(
     #    './ImageDatabaseCrops/NikonD60/DS-01-UTFI-0196-0_crop.TIF',
     #    1234)
-    sf = SoftHash('test.png', 1234)
+    sf = SoftHash('test.png', 1234, 32)
 
     sf.update()
 
     # TODO: based on the keysize we can decide to resize the image
     # to match the final key size :)
 
-    pyplot.show(block=True)
+    plt.show(block=True)
 
 
 """
@@ -231,6 +286,5 @@ hash structure:
 - the resulting hash size depends on:
     + # of 8x8 blocks used
     + ratio (we will resize the image given this parameter)
-    + 1 int *R/G/B major component*
 
 """
