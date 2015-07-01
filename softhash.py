@@ -106,11 +106,13 @@ class SoftHash(object):
         random.seed(key)  # initialize RNG
 
         # create the key selecting which blocks we are going to use
-        self._key = [
-            [random.choice(range(0, self._blocks[0])),
-                random.choice(range(0, self._blocks[1]))]
-            for i in range(0, self._keysize)
-        ]
+        selectedblocks = random.sample(range(0, self._nblocks), self._keysize)
+
+        # get the block element in the matrix
+        for block in selectedblocks:
+            x = block % self._blocks[0]
+            y = int(np.floor(block / self._blocks[0]))
+            self._key.append((x, y))
 
         logger.debug("Key is: %s", self._key)
 
@@ -172,14 +174,17 @@ class SoftHash(object):
 
         # now we use the selected block with the given key
 
-        logger.debug("using blocks of size %d", self._block_size)
+        logger.debug("using blocks of size %d\n", self._block_size)
 
         if DEBUG:
             # needed to calc the square layout for plots
-            sqr = np.around(np.sqrt(self._keysize))
+            sqr = np.ceil(np.sqrt(self._keysize))
 
         quant = np.rot90(np.triu(np.ones([blocksize, blocksize])))
-        logger.debug("quantization matrix: %s", quant)
+        logger.debug("quantization matrix: %s\n", quant)
+
+        max_tot = np.finfo(np.float32).min
+        min_tot = np.finfo(np.float32).max
 
         for idx, block in enumerate(self.key_pixels):
 
@@ -194,16 +199,21 @@ class SoftHash(object):
                 block[0]:block[0] + blocksize,
                 block[1]:block[1] + blocksize] - 128
 
-            logger.debug("index = %s", block)
-            logger.debug("selected block: %s", B)
+            logger.debug("block index = %s", block)
+            # logger.debug("selected block: %s", B)
 
             Bdct = cv2.dct(np.array(B, dtype=np.float32))
-            logger.debug("block dct: %s", Bdct)
+            # logger.debug("block dct: %s", Bdct)
 
             # quantize the block DCT cleaning out high frequencies
             Qdct = np.multiply(quant, Bdct)
 
-            logger.debug("quantized block DCT: %s", Qdct)
+            max_val = Bdct.max()
+            max_tot = max(max_tot, max_val)
+            min_val = Bdct.min()
+            min_tot = min(min_tot, min_val)
+
+            # logger.debug("quantized block DCT: %s", Qdct)
 
             if DEBUG:
                 # show the selected blocks
@@ -217,11 +227,13 @@ class SoftHash(object):
                 plt.figure('blocks DCT')
                 plt.subplot(sqr, sqr, idx + 1)
                 plt.imshow(
-                    Bdct, cmap=plt.get_cmap('gray'),
+                    Bdct, cmap=plt.get_cmap('jet'),
                     interpolation='nearest')
 
                 # inverse DCT and shift again +128 to check results
-                invBdct = cv2.idct(Qdct) + 128
+                # an int 16 should be enough to store results of the DCT
+                # (even less bits could be used probably!)
+                invBdct = np.array(cv2.idct(Qdct), dtype=np.int16) + 128
 
                 plt.figure('decoded DCT blocks')
                 plt.subplot(sqr, sqr, idx + 1)
@@ -231,6 +243,7 @@ class SoftHash(object):
 
         if DEBUG:
             plt.tight_layout()
+        logger.debug("max and min values: %s, %s", max_tot, min_tot)
 
     @property
     def is_color(self):
@@ -241,7 +254,7 @@ if __name__ == "__main__":
     # sf = SoftHash(
     #    './ImageDatabaseCrops/NikonD60/DS-01-UTFI-0196-0_crop.TIF',
     #    1234)
-    sf = SoftHash('test.png', 1234, 8, 32)
+    sf = SoftHash('test.png', 1234, 32, 9)
 
     sf.update()
 
