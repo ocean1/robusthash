@@ -15,16 +15,17 @@ matplotlib.interactive(True)
 matplotlib.use("TkAgg")
 # plt.ion()
 
-DEBUG = True
+DEBUG = False
 
 logger = logging.getLogger("softhash")
 ch = logging.StreamHandler()
 
-logger.setLevel("WARNING")
-ch.setLevel("WARNING")
-
-logger.setLevel("DEBUG")
-ch.setLevel("DEBUG")
+if not DEBUG:
+    logger.setLevel("WARNING")
+    ch.setLevel("WARNING")
+else:
+    logger.setLevel("DEBUG")
+    ch.setLevel("DEBUG")
 
 logger.addHandler(ch)
 
@@ -124,7 +125,7 @@ class SoftHash(object):
                  resize=(64, 64),
                  hashsize=8
                  ):
-
+        self._key = []
         self._block_size = blocksize
 
         # we have a DB of 256x256 cropped images, subsample
@@ -229,13 +230,7 @@ class SoftHash(object):
 
                 plt.plot(bl[0], bl[1], 'r-')
 
-        # plt.figure('Cr channel')
-        # plt.imshow(Cr)
-        # plt.figure('Cb channel')
-        # plt.imshow(Cb)
-
         # now we use the selected block with the given key
-
         logger.debug("using blocks of size %d\n", self._block_size)
 
         if DEBUG:
@@ -321,17 +316,16 @@ class SoftHash(object):
         return True
 
     def hexdigest(self, hashsize=1024):
-
         self._hashsize = hashsize
         hashBitsPerCoeff = (
             float(hashsize) / len(self.coeffs))
         hashBitsPerCoeff = int(np.ceil(hashBitsPerCoeff))
 
         hashbitsround = len(self.coeffs) * hashBitsPerCoeff
-        if hashbitsround != hashBitsPerCoeff:
+        if hashbitsround != hashsize:
             logger.warning(
                 "sorry but your hash size was rounded up to %d bits",
-                hashBitsPerCoeff)
+                hashbitsround)
             # we will use some more bits who cares! :]
         self.hashBitsPerCoeff = hashBitsPerCoeff
 
@@ -344,21 +338,33 @@ class SoftHash(object):
         hashBitsPerCoeff = self.hashBitsPerCoeff
 
         # get the MaxDCT value possible
-        MaxDCTVal = 255 * ((self._block_size)**2)
-        twiceMaxDCTVal = MaxDCTVal*2
-        qDiv = twiceMaxDCTVal >> (hashBitsPerCoeff-1)
+        MaxDCTVal = 1024
+        qDiv = 2*MaxDCTVal >> (hashBitsPerCoeff)
 
         # compute average this way we can quantize better
         avg_coeff = np.average(self.coeffs)
         for k in self.coeffs:
-            ki = k - avg_coeff + twiceMaxDCTVal
+            ki = k
+            if ki < -MaxDCTVal:
+                ki = -MaxDCTVal
+            elif ki > MaxDCTVal:
+                ki = MaxDCTVal
+            ki = ki - avg_coeff + MaxDCTVal
+
             ki /= qDiv
             ki = int(ki)
+
             computed_hash.append(
                 bitstring.Bits(uint=ki, length=hashBitsPerCoeff))
 
         self._softhash = computed_hash
-        return computed_hash.hex
+        return computed_hash
+
+    def similarity(self, b):
+        def hamming_weight(a, b):
+                return (a ^ b).count(True)
+        d = hamming_weight(self._softhash, b)
+        return 100 - ((d * 100) / self._softhash.len)
 
     @property
     def is_color(self):
@@ -366,16 +372,28 @@ class SoftHash(object):
 
 
 if __name__ == "__main__":
-    # sf = SoftHash(
-    #    './ImageDatabaseCrops/NikonD60/DS-01-UTFI-0196-0_crop.TIF',
-    #    1234)
+    f = './ImageDatabaseCrops/NikonD60/DS-01-UTFI-0169-0_crop.TIF'
+    f = '/home/ocean/projects/softhash/ImageDatabaseCrops/NikonD3000/DSC_0193_crop.TIF'
+    # f = 'test.png'
     sf = SoftHash(
-        'test.png', 1234, blocksize=16,
+        f, 1234, blocksize=16,
         selectedblocks=16, maskfactor=10,
         resize=(64, 64), hashsize=8)
 
     h = sf.hexdigest()
     print h
+
+    f = '/home/ocean/projects/softhash/ImageDatabaseCrops/NikonD3000/DSC_0157_crop.TIF'
+    #f = '/home/ocean/projects/softhash/ImageDatabaseCrops/NikonD3000/DSC_0200_crop.TIF' 
+    sf2 = SoftHash(
+        f, 1234, blocksize=16,
+        selectedblocks=16, maskfactor=10,
+        resize=(64, 64), hashsize=8)
+    h = sf2.hexdigest()
+    print h
+    print sf.similarity(h)
+
+
 
     # TODO: based on the keysize we can decide to resize the image
     # to match the final key size :)
