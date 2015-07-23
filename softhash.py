@@ -8,6 +8,9 @@ import random
 import logging
 
 import matplotlib
+
+import bitstring
+
 matplotlib.interactive(True)
 matplotlib.use("TkAgg")
 # plt.ion()
@@ -20,8 +23,8 @@ ch = logging.StreamHandler()
 logger.setLevel("WARNING")
 ch.setLevel("WARNING")
 
-# logger.setLevel("WARNING")
-# ch.setLevel("WARNING")
+logger.setLevel("DEBUG")
+ch.setLevel("DEBUG")
 
 logger.addHandler(ch)
 
@@ -115,10 +118,11 @@ class SoftHash(object):
     def __init__(self,
                  imagefile,
                  key,
-                 blocksize=8,
-                 selectedblocks=None,
-                 maskfactor=3,
-                 resize=(64, 64)
+                 blocksize=16,
+                 selectedblocks=16,
+                 maskfactor=11,
+                 resize=(64, 64),
+                 hashsize=8
                  ):
 
         self._block_size = blocksize
@@ -159,9 +163,7 @@ class SoftHash(object):
         self.mask = np.rot90(
             np.triu(np.ones([blocksize, blocksize]), maskfactor))
 
-        logger.info(
-            "the hash size is %d bits",
-            8 * np.count_nonzero(self.mask) * selectedblocks)
+        self._hash()
 
     def initializeKey(self, key):
         random.seed(key)  # initialize RNG
@@ -192,7 +194,7 @@ class SoftHash(object):
         imgfilter(self.img, self.img)
         pass
 
-    def hash(self):
+    def _hash(self):
         # by default we denoise the image using non-local means algorithm
         # should denoising be done before or after resizing?
         self.denoise()
@@ -212,7 +214,6 @@ class SoftHash(object):
         else:
             Y = self.img
 
-        logger.debug("Y: %s", Y)
         blocksize = self._block_size
 
         if DEBUG:
@@ -241,10 +242,10 @@ class SoftHash(object):
             # needed to calc the square layout for plots
             sqr = np.ceil(np.sqrt(self._keysize))
 
-        logger.debug("mask matrix: %s\n", self.mask)
+        # logger.debug("mask matrix: %s\n", self.mask)
 
-        max_tot = np.finfo(np.float32).min
-        min_tot = np.finfo(np.float32).max
+        transformedBlocks = []  # just keep all the blocks somewhere
+        self.coeffs = []
 
         for idx, block in enumerate(self.key_pixels):
 
@@ -259,15 +260,14 @@ class SoftHash(object):
                 block[0]:block[0] + blocksize,
                 block[1]:block[1] + blocksize] - 128
 
-            # logger.debug("block index = %s", block)
+            # logger.debug("selected block index = %s", block)
             # logger.debug("selected block: %s", B)
 
             Bdct = cv2.dct(np.array(B, dtype=np.float32))
             # logger.debug("block dct: %s", Bdct)
 
             # quantize the block DCT cleaning out high frequencies
-            Qdct = np.array(np.multiply(self.mask, Bdct), dtype=np.int8)
-            Qdct = np.array(Qdct, dtype=np.float32)
+            Qdct = np.array(np.multiply(self.mask, Bdct))
 
             # logger.debug("quantized block DCT: %s", Qdct)
 
@@ -297,22 +297,68 @@ class SoftHash(object):
                 plt.imshow(
                     invBdct, cmap=plt.get_cmap('gray'),
                     interpolation='nearest')
+            transformedBlocks.append(Qdct)
 
-        logger.debug("max and min values: %s, %s", max_tot, min_tot)
+            # let's see what are the indices of the coeffs
+            # we start from the mask we defined since it will
+            # help us keep a constant number of coeffs
+            # which means we can easily compare images
+            # using a hamming distance
+            indices = np.transpose(self.mask.nonzero())
 
-        # let's build the hash
+            # get indices for coeffs (keep in mind we don't want the DC coeff!
+            for idx in indices:
+                if not idx.any():
+                    continue        # skip the DC component
+                self.coeffs.append(Qdct[idx[0]][idx[1]])
 
-        indices = np.transpose(self.mask.nonzero())
+        # coeffs now contains the coefficients
+        # we are interested in inserting into the hash
+        # now let's quantize them
 
-        h = np.array(np.zeros(len(indices)))
+        logger.debug("using %d coeffs\n", len(self.coeffs))
+        # now quantize and return values
+        return True
 
-        i = 0
-        for idx in indices:
-            h[i] = Qdct[idx[0]][idx[1]]
-            i += 1
-        print h
+    def hexdigest(self, hashsize=1024):
 
-        return ImageHash(h)
+        self._hashsize = hashsize
+        hashBitsPerCoeff = (
+            float(hashsize) / len(self.coeffs))
+        hashBitsPerCoeff = int(np.ceil(hashBitsPerCoeff))
+
+        hashbitsround = len(self.coeffs) * hashBitsPerCoeff
+        if hashbitsround != hashBitsPerCoeff:
+            logger.warning(
+                "sorry but your hash size was rounded up to %d bits",
+                hashBitsPerCoeff)
+            # we will use some more bits who cares! :]
+        self.hashBitsPerCoeff = hashBitsPerCoeff
+
+        return self._quantizehash()
+
+    def _quantizehash(self):
+        """quantize the hash and return the values"""
+
+        computed_hash = bitstring.BitArray()
+        hashBitsPerCoeff = self.hashBitsPerCoeff
+
+        # get the MaxDCT value possible
+        MaxDCTVal = 255 * ((self._block_size)**2)
+        twiceMaxDCTVal = MaxDCTVal*2
+        qDiv = twiceMaxDCTVal >> (hashBitsPerCoeff-1)
+
+        # compute average this way we can quantize better
+        avg_coeff = np.average(self.coeffs)
+        for k in self.coeffs:
+            ki = k - avg_coeff + twiceMaxDCTVal
+            ki /= qDiv
+            ki = int(ki)
+            computed_hash.append(
+                bitstring.Bits(uint=ki, length=hashBitsPerCoeff))
+
+        self._softhash = computed_hash
+        return computed_hash.hex
 
     @property
     def is_color(self):
@@ -325,11 +371,10 @@ if __name__ == "__main__":
     #    1234)
     sf = SoftHash(
         'test.png', 1234, blocksize=16,
-        selectedblocks=10, maskfactor=11,
-        resize=(64, 64))
+        selectedblocks=16, maskfactor=10,
+        resize=(64, 64), hashsize=8)
 
-    h = sf.hash()
-
+    h = sf.hexdigest()
     print h
 
     # TODO: based on the keysize we can decide to resize the image
