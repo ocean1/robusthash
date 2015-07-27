@@ -338,7 +338,7 @@ class SoftHash(object):
         hashBitsPerCoeff = self.hashBitsPerCoeff
 
         # get the MaxDCT value possible
-        MaxDCTVal = 1024
+        MaxDCTVal = 255 * self._block_size * self._block_size
         qDiv = 2*MaxDCTVal >> (hashBitsPerCoeff)
 
         # compute average this way we can quantize better
@@ -360,10 +360,12 @@ class SoftHash(object):
         self._softhash = computed_hash
         return computed_hash
 
+    def hamming_distance(self, b):
+        return (self._softhash ^ b).count(True)
+
     def similarity(self, b):
         def hamming_weight(a, b):
-                return (a ^ b).count(True)
-        d = hamming_weight(self._softhash, b)
+        d = self.hamming_distance(b)
         return 100 - ((d * 100) / self._softhash.len)
 
     @property
