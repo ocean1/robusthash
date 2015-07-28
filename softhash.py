@@ -340,14 +340,14 @@ class SoftHash(object):
             y = x
             if y >= xMax:
                 logger.warning("%f has been capped!",  y)
-                y = xMax # cap numbers too big
+                y = xMax  # cap numbers too big
             # use mu law for non uniform quantization
-            y = np.log(1 + (mu * ( np.absolute(y)/xMax )))
+            y = np.log(1 + (mu * (np.absolute(y)/xMax)))
             y *= xMax
             y /= np.log(1 + mu)
             y *= np.sign(x)
 
-            y += xMax # shift to have positive values!
+            y += xMax  # shift to have positive values!
             y /= qDiv
 
             y = int(y) - 1
@@ -390,7 +390,6 @@ class SoftHash(object):
 
 if __name__ == "__main__":
     f = './ImageDatabaseCrops/NikonD60/DS-01-UTFI-0169-0_crop.TIF'
-    f = '/home/ocean/projects/softhash/ImageDatabaseCrops/NikonD3000/DSC_0193_crop.TIF'
     # f = 'test.png'
     sf = SoftHash(
         f, 1234, blocksize=16,
@@ -400,8 +399,7 @@ if __name__ == "__main__":
     h = sf.hexdigest()
     print h
 
-    f = '/home/ocean/projects/softhash/ImageDatabaseCrops/NikonD3000/DSC_0216_crop.TIF'
-    f = '/home/ocean/projects/softhash/ImageDatabaseCrops/NikonD3000/DSC_0157_crop.TIF'
+    f = './ImageDatabaseCrops/NikonD3000/DSC_0157_crop.TIF'
     sf2 = SoftHash(
         f, 1234, blocksize=16,
         selectedblocks=16, maskfactor=10,
