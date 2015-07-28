@@ -360,6 +360,7 @@ class SoftHash(object):
 
         # get the MaxDCT value possible
         MaxDCTVal = 255 * self._block_size * self._block_size
+        # cap the max values mu law still not good enough
         MaxDCTVal = 1024
 
         # compute average this way we can quantize better
