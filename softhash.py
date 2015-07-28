@@ -324,7 +324,7 @@ class SoftHash(object):
         hashbitsround = len(self.coeffs) * hashBitsPerCoeff
         if hashbitsround != hashsize:
             logger.warning(
-                "sorry but your hash size was rounded up to %d bits",
+                "hash size was rounded up to %d bits",
                 hashbitsround)
             # we will use some more bits who cares! :]
         self.hashBitsPerCoeff = hashBitsPerCoeff
@@ -334,28 +334,43 @@ class SoftHash(object):
     def _quantizehash(self):
         """quantize the hash and return the values"""
 
+        def quantize_coeff(x, xMax, mu):
+            qDiv = 2*xMax >> (hashBitsPerCoeff)
+
+            y = x
+            if y >= xMax:
+                logger.warning("%f has been capped!",  y)
+                y = xMax # cap numbers too big
+            # use mu law for non uniform quantization
+            y = np.log(1 + (mu * ( np.absolute(y)/xMax )))
+            y *= xMax
+            y /= np.log(1 + mu)
+            y *= np.sign(x)
+
+            y += xMax # shift to have positive values!
+            y /= qDiv
+
+            y = int(y) - 1
+            if y < 0:
+                y = 0
+            return y
+
         computed_hash = bitstring.BitArray()
         hashBitsPerCoeff = self.hashBitsPerCoeff
 
         # get the MaxDCT value possible
         MaxDCTVal = 255 * self._block_size * self._block_size
-        qDiv = 2*MaxDCTVal >> (hashBitsPerCoeff)
+        MaxDCTVal = 1024
 
         # compute average this way we can quantize better
-        avg_coeff = np.average(self.coeffs)
+        # avg_coeff = np.average(self.coeffs)
+        # since we use a non linear quant. no average shift...
+        mu = 250
         for k in self.coeffs:
-            ki = k
-            if ki < -MaxDCTVal:
-                ki = -MaxDCTVal
-            elif ki > MaxDCTVal:
-                ki = MaxDCTVal
-            ki = ki - avg_coeff + MaxDCTVal
-
-            ki /= qDiv
-            ki = int(ki)
+            y = quantize_coeff(k, MaxDCTVal, mu)
 
             computed_hash.append(
-                bitstring.Bits(uint=ki, length=hashBitsPerCoeff))
+                bitstring.Bits(uint=y, length=hashBitsPerCoeff))
 
         self._softhash = computed_hash
         return computed_hash
@@ -364,7 +379,6 @@ class SoftHash(object):
         return (self._softhash ^ b).count(True)
 
     def similarity(self, b):
-        def hamming_weight(a, b):
         d = self.hamming_distance(b)
         return 100 - ((d * 100) / self._softhash.len)
 
@@ -385,8 +399,8 @@ if __name__ == "__main__":
     h = sf.hexdigest()
     print h
 
+    f = '/home/ocean/projects/softhash/ImageDatabaseCrops/NikonD3000/DSC_0216_crop.TIF'
     f = '/home/ocean/projects/softhash/ImageDatabaseCrops/NikonD3000/DSC_0157_crop.TIF'
-    #f = '/home/ocean/projects/softhash/ImageDatabaseCrops/NikonD3000/DSC_0200_crop.TIF' 
     sf2 = SoftHash(
         f, 1234, blocksize=16,
         selectedblocks=16, maskfactor=10,
@@ -394,8 +408,6 @@ if __name__ == "__main__":
     h = sf2.hexdigest()
     print h
     print sf.similarity(h)
-
-
 
     # TODO: based on the keysize we can decide to resize the image
     # to match the final key size :)
