@@ -128,10 +128,14 @@ class SoftHash(object):
         self._key = []
         self._block_size = blocksize
 
+        self.img = cv2.imread(imagefile, cv2.CV_LOAD_IMAGE_UNCHANGED)
+
+        # by default we denoise the image using non-local means algorithm
+        # should denoising be done before or after resizing?
+        self.denoise()
+
         # we have a DB of 256x256 cropped images, subsample
-        self.img = cv2.resize(
-            cv2.imread(imagefile, cv2.CV_LOAD_IMAGE_UNCHANGED),
-            resize)
+        self.img = cv2.resize(self.img, resize)
         # cv2 loads images in BGR. BGR -> RGB conversion needed
 
         if self.img.shape[2] == 3:
@@ -193,12 +197,8 @@ class SoftHash(object):
         apply the given filter to the image
         """
         imgfilter(self.img, self.img)
-        pass
 
     def _hash(self):
-        # by default we denoise the image using non-local means algorithm
-        # should denoising be done before or after resizing?
-        self.denoise()
 
         # we will use the luminance channel
         # if it's greyscale just use the existing channel
@@ -272,7 +272,7 @@ class SoftHash(object):
                 plt.figure('selected blocks')
                 plt.subplot(sqr, sqr, idx + 1)
                 plt.imshow(
-                    B, cmap=plt.get_cmap('gray'),
+                    B+128, cmap=plt.get_cmap('gray'),
                     interpolation='nearest')
 
                 plt.figure('blocks DCT')
@@ -285,7 +285,7 @@ class SoftHash(object):
                 # an int 16 should be enough to store results of the DCT
                 # (even less bits could be used probably!)
                 invBdct = np.array(
-                    cv2.idct(Qdct), dtype=np.int32) + 128
+                    cv2.idct(Qdct)+128, dtype=np.uint8)
 
                 plt.figure('decoded DCT blocks')
                 plt.subplot(sqr, sqr, idx + 1)
@@ -399,7 +399,8 @@ if __name__ == "__main__":
     h = sf.hexdigest()
     print h
 
-    f = './ImageDatabaseCrops/NikonD3000/DSC_0157_crop.TIF'
+    f = './ImageDatabaseCrops/NikonD3000/DSC_0189_crop.TIF'
+    f = './ImageDatabaseCrops/NikonD200_D2/Nikon_D200_1_17215_crop.TIF'
     sf2 = SoftHash(
         f, 1234, blocksize=16,
         selectedblocks=16, maskfactor=10,
