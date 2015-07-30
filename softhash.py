@@ -121,9 +121,8 @@ class SoftHash(object):
                  key,
                  blocksize=16,
                  selectedblocks=16,
-                 maskfactor=11,
+                 maskfactor=10,
                  resize=(64, 64),
-                 hashsize=8
                  ):
         self._key = []
         self._block_size = blocksize
@@ -316,7 +315,6 @@ class SoftHash(object):
         return True
 
     def hexdigest(self, hashsize=1024):
-        self._hashsize = hashsize
         hashBitsPerCoeff = (
             float(hashsize) / len(self.coeffs))
         hashBitsPerCoeff = int(np.ceil(hashBitsPerCoeff))
@@ -394,19 +392,17 @@ if __name__ == "__main__":
     sf = SoftHash(
         f, 1234, blocksize=16,
         selectedblocks=16, maskfactor=10,
-        resize=(64, 64), hashsize=8)
+        resize=(64, 64))
 
     h = sf.hexdigest()
-    print h
 
     f = './ImageDatabaseCrops/NikonD3000/DSC_0189_crop.TIF'
     f = './ImageDatabaseCrops/NikonD200_D2/Nikon_D200_1_17215_crop.TIF'
     sf2 = SoftHash(
         f, 1234, blocksize=16,
         selectedblocks=16, maskfactor=10,
-        resize=(64, 64), hashsize=8)
+        resize=(64, 64))
     h = sf2.hexdigest()
-    print h
     print sf.similarity(h)
 
     # TODO: based on the keysize we can decide to resize the image
