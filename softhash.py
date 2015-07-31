@@ -6,14 +6,19 @@ from matplotlib import pyplot as plt
 import random
 
 import logging
-
+from glob import glob
 import matplotlib
 
 import bitstring
 
+from noise import noisy
+
 matplotlib.interactive(True)
 matplotlib.use("TkAgg")
 # plt.ion()
+
+import PIL
+from StringIO import StringIO
 
 DEBUG = False
 
@@ -127,7 +132,10 @@ class SoftHash(object):
         self._key = []
         self._block_size = blocksize
 
-        self.img = cv2.imread(imagefile, cv2.CV_LOAD_IMAGE_UNCHANGED)
+        if type(imagefile) is np.ndarray:
+            self.img = imagefile
+        else:
+            self.img = cv2.imread(imagefile, cv2.CV_LOAD_IMAGE_UNCHANGED)
 
         # by default we denoise the image using non-local means algorithm
         # should denoising be done before or after resizing?
@@ -386,43 +394,104 @@ class SoftHash(object):
         return self._color_image
 
 
+def hamming_distance(a, b):
+    return (a ^ b).count(True)
+
+
+def buff_to_cvimg(img_stream, cv2_img_flag=0):
+    img_stream.seek(0)
+    img_array = np.asarray(bytearray(img_stream.read()), dtype=np.uint8)
+    return cv2.imdecode(img_array, cv2_img_flag)
+
 if __name__ == "__main__":
+
+    key = 1234
     f = './ImageDatabaseCrops/NikonD60/DS-01-UTFI-0169-0_crop.TIF'
     # f = 'test.png'
-    sf = SoftHash(
-        f, 1234, blocksize=16,
-        selectedblocks=16, maskfactor=10,
-        resize=(64, 64))
+    sf = SoftHash(f, key)
 
     h = sf.hexdigest()
 
     f = './ImageDatabaseCrops/NikonD3000/DSC_0189_crop.TIF'
     f = './ImageDatabaseCrops/NikonD200_D2/Nikon_D200_1_17215_crop.TIF'
-    sf2 = SoftHash(
-        f, 1234, blocksize=16,
-        selectedblocks=16, maskfactor=10,
-        resize=(64, 64))
+    sf2 = SoftHash(f, key)
+
     h = sf2.hexdigest()
     print sf.similarity(h)
 
-    # TODO: based on the keysize we can decide to resize the image
-    # to match the final key size :)
+    # coeffs = []
+    # for f in glob('./ImageDatabaseCrops/*/*.TIF'):
+    #    h = SoftHash(f, key)
+    #    coeffs.append(h.coeffs)
+
+    # plt.hist(coeffs, 50, normed=1, facecolor='b', alpha=0.75)
+
+    # TESTS
+
+    N = 0
+    results = {
+        'blur': {},
+        'jpeg': {},
+        'noise': {}
+    }
+
+    keysizes = [k*320 for k in range(1, 10)]
+
+    for keysize in keysizes:
+        results['blur'][keysize] = 0
+        results['jpeg'][keysize] = 0
+        results['noise'][keysize] = 0
+
+    for f in glob('./ImageDatabaseCrops/NikonD200_D2/*.TIF'):
+        img_orig = cv2.imread(f, cv2.CV_LOAD_IMAGE_UNCHANGED)
+        # Gaussian Blur (low pass filtering)
+        img_blur = cv2.blur(img_orig, (5, 5))
+        # JPEG compression
+
+        buff = StringIO()
+        im1 = PIL.Image.open(f)
+        im1.save(buff, "JPEG", quality=30)
+        img_jpeg = buff_to_cvimg(buff, cv2.CV_LOAD_IMAGE_UNCHANGED)
+
+        # noise addition
+        img_noisy = noisy('speckle', img_orig)
+
+        sho = SoftHash(img_orig, key)
+
+        shb = SoftHash(img_blur, key)
+        shj = SoftHash(img_jpeg, key)
+        shn = SoftHash(img_noisy, key)
+
+        for keysize in keysizes:
+            ho = sho.hexdigest(keysize)
+            hb = shb.hexdigest(keysize)
+            hj = shb.hexdigest(keysize)
+            hn = shn.hexdigest(keysize)
+
+            results['blur'][keysize] += hamming_distance(ho, hb)
+            results['jpeg'][keysize] += hamming_distance(ho, hj)
+            results['noise'][keysize] += hamming_distance(ho, hn)
+
+        N += 1
+
+    blur_errs = []
+    jpeg_errs = []
+    noise_errs = []
+
+    print keysizes
+    print N
+    for keysize in keysizes:
+        blur_errs.append(results['blur'][keysize] * 100 / N / keysize)
+        jpeg_errs.append(results['jpeg'][keysize] * 100 / N / keysize)
+        noise_errs.append(results['noise'][keysize] * 100 / N / keysize)
+
+    plt.figure('blur errors')
+    plt.plot(keysizes, blur_errs, 'k', keysizes, blur_errs, 'ro')
+
+    plt.figure('jpeg errors')
+    plt.plot(keysizes, jpeg_errs, 'k', keysizes, jpeg_errs, 'ro')
+
+    plt.figure('noise errors')
+    plt.plot(keysizes, noise_errs, 'k', keysizes, noise_errs, 'ro')
 
     plt.show(block=True)
-
-
-"""
-'The spatial filtering applied by the human visual system appears
-to be low pass for chromatic stimuli and band pass for luminance stimuli'
-http://www.ncbi.nlm.nih.gov/pubmed/9499586
-
-so we are going to use the luminance
-
-hash structure:
-- for each 8x8 block composing the picture we select the low frequencies
-(using quantization -we could even use the JPEG quantization tables!-)
-- the resulting hash size depends on:
-    + # of 8x8 blocks used
-    + ratio (we will resize the image given this parameter)
-
-"""
